@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Entropy Aware Reward Guidance for Diffusion Language Model Alignment</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <script>
+        MathJax = { tex: { inlineMath: [['$','$']], displayMath: [['$$','$$']] } };
+    </script>
+    <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        :root {
+            --bg: #ffffff;
+            --text: #1a1a1a;
+            --text-secondary: #555;
+            --text-muted: #888;
+            --border: #e5e5e5;
+            --code-bg: #faf9f7;
+            --burnt-orange: #BF5700;
+            --burnt-orange-light: #f9f3ef;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Source Sans 3', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+            font-size: 17px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* Header */
+        header {
+            padding: 80px 0 60px;
+            text-align: center;
+            border-bottom: 3px solid var(--burnt-orange);
+        }
+
+        .venue {
+            font-size: 14px;
+            color: var(--burnt-orange);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 24px;
+            font-weight: 600;
+        }
+
+        h1 {
+            font-family: 'Source Serif 4', serif;
+            font-size: 2.4rem;
+            font-weight: 600;
+            line-height: 1.25;
+            margin-bottom: 24px;
+        }
+
+        .subtitle {
+            font-family: 'Source Serif 4', serif;
+            font-size: 1.2rem;
+            color: var(--text-secondary);
+            font-style: italic;
+            margin-bottom: 32px;
+        }
+
+        .authors {
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+
+        .authors a {
+            color: var(--text);
+            text-decoration: none;
+        }
+
+        .authors a:hover {
+            color: var(--burnt-orange);
+        }
+
+        .equal {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .affiliation {
+            font-size: 15px;
+            color: var(--burnt-orange);
+            margin-bottom: 32px;
+            font-weight: 600;
+        }
+
+        .links {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .links a {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 20px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            text-decoration: none;
+            font-size: 15px;
+            transition: all 0.2s;
+        }
+
+        .links a:hover {
+            border-color: var(--burnt-orange);
+            color: var(--burnt-orange);
+        }
+
+        .links svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        /* Sections */
+        section {
+            padding: 48px 0;
+            border-top: 1px solid var(--border);
+        }
+
+        h2 {
+            font-family: 'Source Serif 4', serif;
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: var(--burnt-orange);
+        }
+
+        p {
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+
+        p:last-child {
+            margin-bottom: 0;
+        }
+
+        /* Figure */
+        .figure {
+            margin: 32px 0;
+        }
+
+        .figure-placeholder {
+            background: var(--burnt-orange-light);
+            border: 1px dashed var(--burnt-orange);
+            min-height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--burnt-orange);
+            font-size: 14px;
+        }
+
+        .figure-caption {
+            margin-top: 12px;
+            font-size: 14px;
+            color: var(--text-muted);
+            line-height: 1.6;
+        }
+
+        .figure-img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        /* Examples */
+        .container-wide {
+            max-width: 1100px;
+        }
+
+        .example-item {
+            margin-bottom: 28px;
+        }
+
+        .example-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .example-gif {
+            width: 100%;
+            height: auto;
+            display: block;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+        }
+
+        /* Results */
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-top: 24px;
+        }
+
+        .result-card {
+            background: var(--burnt-orange-light);
+            border-left: 3px solid var(--burnt-orange);
+            padding: 20px;
+        }
+
+        .result-card .benchmark {
+            font-size: 13px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .result-card .score {
+            font-size: 2rem;
+            font-weight: 600;
+            color: var(--burnt-orange);
+            line-height: 1;
+            margin-bottom: 4px;
+        }
+
+        .result-card .comparison {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* Citation */
+        .citation {
+            background: var(--code-bg);
+            padding: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            line-height: 1.7;
+            overflow-x: auto;
+            position: relative;
+            border-left: 3px solid var(--burnt-orange);
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            padding: 6px 10px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .copy-btn:hover {
+            border-color: var(--burnt-orange);
+            color: var(--burnt-orange);
+        }
+
+        .copy-btn svg {
+            width: 12px;
+            height: 12px;
+        }
+
+        /* Footer */
+        footer {
+            padding: 40px 0;
+            text-align: center;
+            border-top: 1px solid var(--border);
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+
+        footer a {
+            color: var(--burnt-orange);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            header {
+                padding: 60px 0 40px;
+            }
+
+            h1 {
+                font-size: 1.8rem;
+            }
+
+            .examples-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .results-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .links {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .links a {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <p class="venue">Preprint 2026</p>
+            <h1>Entropy Aware Reward Guidance for Diffusion Language Model Alignment</h1>
+            <p class="subtitle">EntRGi for steering · RGRL for post-training</p>
+            
+            <p class="authors">
+                <a href="#">Atula Tejaswi</a>*,
+                <a href="#">Litu Rout</a>*,
+                <a href="#">Constantine Caramanis</a>,
+                <a href="#">Sanjay Shakkottai</a>,
+                <a href="#">Sujay Sanghavi</a>
+            </p>
+            <p class="affiliation">The University of Texas at Austin</p>
+
+            <div class="links">
+                <a href="https://arxiv.org/abs/2602.05000">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Paper
+                </a>
+                <a href="https://github.com/atutej/entrgi-rgrl">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                    </svg>
+                    Code
+                </a>
+                <a href="#citation">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    BibTeX
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <section id="abstract">
+        <div class="container">
+            <h2>Abstract</h2>
+            <p>
+                Reward guidance, also known as posterior sampling, is a popular method for test-time adaptation and post-training in continuous diffusion models. In this paper, we study reward guidance for discrete diffusion language models; one cannot differentiate through the natural outputs of the model because they are discrete tokens.
+            </p>
+            <p>
+                We introduce <strong>EntRGi</strong>: <strong>Ent</strong>ropy aware <strong>R</strong>eward <strong>Gi</strong>dance to address this issue. EntRGi dynamically interpolates between continuous token relaxations and sampled hard tokens, on a token-by-token basis, using the diffusion model's predictive entropy. We demonstrate that EntRGi maintains both reward model reliability and optimization accuracy, while existing approaches sacrifice one for the other.
+            </p>
+            <p>
+                We empirically validate our approach on 7B-parameter diffusion language models across two settings: (1) test-time adaptation, and (2) <strong>RGRL</strong>: <strong>R</strong>eward <strong>G</strong>uided <strong>R</strong>einforcement <strong>L</strong>earning, our recipe for post-training on reward-guided data, showing consistent improvements over state-of-the-art methods.
+            </p>
+        </div>
+    </section>
+
+    <section id="method">
+        <div class="container">
+            <h2>Method</h2>
+
+            <p>
+            EntRGi interpolates between soft embeddings and hard tokens based on entropy:
+            lower entropy emphasizes continuous relaxation for gradient accuracy, while higher
+            entropy relies on hard tokens via STE for reward model reliability. This adaptive
+            weighting resolves the fundamental tension in gradient-based steering of discrete
+            diffusion models.
+            </p>
+
+            <p>
+            Concretely, at each masked position $l$, the input to the reward model is constructed as:
+            $$\hat{e}^l \;=\; \tilde{e}^l \;+\; \text{sg}\!\Big(w^l\,(\bar{e}^l - \tilde{e}^l)\Big)$$
+            where $\tilde{e}^l = \sum_i q_i^l\, \mathbf{E}^R_i$ is the soft embedding (continuous relaxation),
+            $\bar{e}^l = \mathbf{E}^R[x^l]$ is the sampled hard token embedding, and
+            $w^l = H(\mathbf{q}^l)/\log K$ normalizes the entropy coefficient $w^l$ to $[0,1]$.
+            When the model is confident ($w \!\approx\! 0$), the input reduces to the soft embedding, preserving gradient accuracy.
+            When uncertain ($w \!\approx\! 1$), it reverts to STE, ensuring the reward model receives realistic discrete tokens.
+            </p>
+
+            <figure class="figure">
+            <img 
+                src="assets/overview.png" 
+                alt="Overview of EntRGi pipeline showing entropy-weighted interpolation between soft and hard embeddings"
+                class="figure-img"
+            >
+            <figcaption class="figure-caption">
+                <strong>Figure 1.</strong> <strong>Overview of Entropy-aware Reward Guidance (EntRGi).</strong> Given logits <strong><em>q</em></strong> from a diffusion language model (dLLM) at masked positions [m], the goal is to update them to maximize a reward R defined by a reward model. Prior work either compromises reward reliability (Murata et al., 2024; Tae et al., 2025), or gradient accuracy (Rout et al., 2025c). EntRGi addresses these limitations by constructing inputs as a dynamic <em>entropy-weighted interpolation</em> between continuous token embeddings and sampled hard tokens.
+            </figcaption>
+            </figure>
+        </div>
+        </section>
+
+    <section id="results">
+        <div class="container">
+            <h2>Results</h2>
+            <p>
+                We use <a href="https://huggingface.co/Dream-org/Dream-v0-Instruct-7B" style="color: var(--burnt-orange);">Dream-v0-Instruct-7B</a>
+                as the base diffusion language model and
+                <a href="https://huggingface.co/Skywork/Skywork-Reward-V2-Qwen3-1.7B" style="color: var(--burnt-orange);">Skywork-Reward-V2-Qwen3-1.7B</a>
+                as the reward model, evaluated on three multi-skill benchmarking suites:
+                <a href="https://arxiv.org/abs/2506.01937" style="color: var(--burnt-orange);">Reward-Bench-2</a>,
+                <a href="https://arxiv.org/abs/2410.16184" style="color: var(--burnt-orange);">RM-Bench</a>, and
+                <a href="https://arxiv.org/abs/2506.20701" style="color: var(--burnt-orange);">JudgeBench</a>.
+                These datasets contain prompts that measure fine-grained chatbot abilities such as precise instruction following, safety, factuality, and knowledge, with some coverage of math and code.
+            </p>
+            <p>
+                We report the maximum reward value across samples per prompt (Top@1) at sampling temperature $\tau\!=\!0.7$.
+                We compare against Best-of-$N$ (BoN), a gradient-free baseline that samples $N$ independent
+                trajectories and selects the one with the highest reward score.
+            </p>
+            <p style="margin-top: 12px; font-size: 15px; font-weight: 600; color: var(--text);">Test-Time Adaptation &mdash; Dream-v0-7B-Instruct · Skywork-Reward-V2-Qwen3-1.7B · Top@1 (τ = 0.7)</p>
+            <div class="results-grid">
+                <div class="result-card">
+                    <div class="benchmark">Reward-Bench-2</div>
+                    <div class="score">3.91</div>
+                    <div class="comparison">BoN: 2.99</div>
+                </div>
+                <div class="result-card">
+                    <div class="benchmark">JudgeBench</div>
+                    <div class="score">2.44</div>
+                    <div class="comparison">BoN: 1.65</div>
+                </div>
+                <div class="result-card">
+                    <div class="benchmark">RM-Bench</div>
+                    <div class="score">5.70</div>
+                    <div class="comparison">BoN: 5.11</div>
+                </div>
+            </div>
+
+            <h2 style="margin-top: 40px;">RGRL: Post-Training</h2>
+            <p>
+                RGRL generates completions via EntRGi or APS reward-gradient guidance, then iteratively updates the dLLM
+                to maximize their likelihood. This dense reward feedback consistently outperforms diffu-GRPO,
+                which relies only on scalar rewards. On WildChat-IF with Dream we observe up to a
+                <strong>70% relative improvement</strong> (+0.90 absolute) over diffu-GRPO.
+            </p>
+
+            <figure class="figure">
+                <img
+                    src="assets/rgrl_result.png"
+                    alt="RGRL training curves on WildChat-IF and lmsys-chat-1m for Dream-v0-7B-Instruct and LLaDA-8B-Instruct"
+                    class="figure-img"
+                >
+                <figcaption class="figure-caption">
+                    <strong>Figure 2.</strong> Training reward curves on WildChat-IF and lmsys-chat-1m with
+                    Skywork-Reward-V2-Qwen3-0.6B. RGRL-EntRGi and RGRL-APS consistently outperform diffu-GRPO
+                    across both Dream-v0-7B-Instruct and LLaDA-8B-Instruct (tokenizer-mismatched).
+                </figcaption>
+            </figure>
+        </div>
+    </section>
+
+    <section id="examples">
+        <div class="container container-wide">
+            <h2>Examples</h2>
+            <p>
+                Each animation shows the same prompt processed with standard sampling (Base, top) and EntRGi-guided
+                generation (bottom), highlighting differences in token selection order and final output quality.
+            </p>
+
+            <div class="example-item">
+                <img src="assets/base_vs_entrgi_complete_this_story_the_map_was_more_ac.gif"
+                     alt="Base vs EntRGi generation: The map was more accurate than expected"
+                     class="example-gif">
+            </div>
+
+            <div class="example-item">
+                <img src="assets/base_vs_entrgi_what_if_cats_ruled_the_world_describe_a.gif"
+                     alt="Base vs EntRGi generation: What if cats ruled the world?"
+                     class="example-gif">
+            </div>
+
+            <div class="example-item">
+                <img src="assets/base_vs_entrgi_explain_why_the_sky_is_blue_to_a_5_year.gif"
+                     alt="Base vs EntRGi generation: Explain why the sky is blue to a 5-year-old"
+                     class="example-gif">
+            </div>
+
+            <div class="example-item">
+                <img src="assets/base_vs_entrgi_complete_this_story_the_last_human_on_e.gif"
+                     alt="Base vs EntRGi generation: The last human on Earth heard a knock"
+                     class="example-gif">
+            </div>
+        </div>
+    </section>
+
+    <section id="citation">
+        <div class="container">
+            <h2>Citation</h2>
+            <div class="citation">
+                <button class="copy-btn" onclick="copyBibtex()">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    Copy
+                </button>
+                
+<pre id="bibtex">@article{tejaswi2026entrgi,
+  title   = {Entropy Aware Reward Guidance for Diffusion Language Model Alignment},
+  author  = {Tejaswi, Atula and Rout, Litu and Caramanis, Constantine and 
+             Shakkottai, Sanjay and Sanghavi, Sujay},
+  journal = {arXiv preprint arXiv:2602.05000},
+  year    = {2026}
+}</pre>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container">
+            <a href="https://www.cs.utexas.edu/">UT Austin CS</a> · <a href="https://www.ece.utexas.edu/">UT Austin ECE</a> · Template inspired by <a href="https://nerfies.github.io/">Nerfies</a>
+        </div>
+    </footer>
+
+    <script>
+        function copyBibtex() {
+            const bibtex = document.getElementById('bibtex').textContent;
+            navigator.clipboard.writeText(bibtex).then(() => {
+                const btn = document.querySelector('.copy-btn');
+                btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg> Copied`;
+                setTimeout(() => {
+                    btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg> Copy`;
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>
