@@ -1,3 +1,5 @@
+import json
+import os
 from types import SimpleNamespace
 
 import accelerate
@@ -115,7 +117,18 @@ def get_tokenizer(
         tokenizer.bos_token = tokenizer.pad_token
 
     # If model is not provided, return as-is
-    model_cfg = transformers.AutoConfig.from_pretrained(model_name_or_path)
+    # AutoConfig has no PEFT-adapter awareness (unlike PreTrainedModel.from_pretrained, which
+    # auto-redirects to the base model via find_adapter_config_file when pointed at a checkpoint
+    # dir containing only adapter_config.json/adapter_model.safetensors, no config.json) -- read
+    # the base model path ourselves for this specific lookup so a trained LoRA checkpoint dir
+    # works here too, not just a full model dir.
+    config_source = model_name_or_path
+    if os.path.isdir(model_name_or_path):
+        adapter_config_path = os.path.join(model_name_or_path, "adapter_config.json")
+        if os.path.isfile(adapter_config_path):
+            with open(adapter_config_path) as f:
+                config_source = json.load(f)["base_model_name_or_path"]
+    model_cfg = transformers.AutoConfig.from_pretrained(config_source, trust_remote_code=True)
     model_cls = transformers.AutoModel._model_mapping[type(model_cfg)]
     model_cls_name = model_cls.__name__
     model_cls_module = model_cls.__module__

@@ -32,6 +32,18 @@ class RgrlDreamSamplerConfig(DreamSamplerConfig):
     deprioritize_eos: bool = True
     """Set confidence = -inf at EOS-sampled positions to prevent premature termination."""
 
+    guidance_kl_beta: float = 0.0
+    """Trust-region coefficient: penalizes _optimize_logits's Adam ascent for moving phi's
+    distribution away from the FROZEN (non-adapted) base model's logits at these same masked
+    positions -- obtained via a second forward pass through self.model with disable_adapter()
+    (see sample()'s frozen_logits computation) -- using the exact closed-form reverse
+    KL(phi || frozen_base). Anchoring to the frozen base rather than this policy's own
+    current-step unguided logits deliberately: the policy's own logits drift together with LoRA
+    training, so a self-anchored trust region would loosen over training even as the policy
+    diverges further from its starting point; anchoring to the base model keeps the bound
+    meaningful throughout training, at the cost of one extra forward pass per guidance call.
+    0.0 (default) = fully unconstrained, matching all prior behavior."""
+
 
 @dataclass
 class RgrlDreamSampler(BaseSampler):
@@ -81,23 +93,34 @@ class RgrlDreamSampler(BaseSampler):
         K: int,
         config: RgrlDreamSamplerConfig,
         device: str,
+        frozen_base_logits: torch.Tensor = None,
     ):
         B_total = x.size(0)
         response_len = x.size(1) - max_prompt_len
         embed_dim = self.mapped_embeds.shape[-1]
 
-        all_mask_logits, mask_counts = [], []
+        all_mask_logits, frozen_mask_logits, mask_counts = [], [], []
         for p in range(B_total):
             n = mask_index[p].sum().item()
             mask_counts.append(n)
             if n > 0:
                 all_mask_logits.append(base_logits[p][mask_index[p]])
+                if frozen_base_logits is not None:
+                    frozen_mask_logits.append(frozen_base_logits[p][mask_index[p]])
 
         if not all_mask_logits:
             return None, None, None
 
         phi = torch.cat(all_mask_logits, dim=0).detach().clone().requires_grad_(True)
         phi_init = phi.detach().clone()
+
+        # Trust-region reference distribution for guidance_kl_beta -- built in the same
+        # per-row, mask_index-ordered concatenation as phi itself so the two tensors line up
+        # position-for-position; frozen since it never changes across the M optimizer steps below.
+        if config.guidance_kl_beta != 0.0 and frozen_mask_logits:
+            ref_logp = F.log_softmax(torch.cat(frozen_mask_logits, dim=0), dim=-1)
+        else:
+            ref_logp = None
 
         optimizer = torch.optim.Adam([phi], lr=config.eta)
 
@@ -224,6 +247,17 @@ class RgrlDreamSampler(BaseSampler):
                 inputs_embeds=full_embeds, attention_mask=attn_mask.bool()
             ).logits[:, 0]
             loss = -rewards.sum()
+
+            if ref_logp is not None:
+                # KL(phi || ref_logp) -- REVERSE KL (mode-seeking), weighted by phi's OWN mass,
+                # so it directly penalizes guidance for CONCENTRATING probability onto a token
+                # the frozen base model considered implausible (the reward-hacking pattern this
+                # trust region exists to prevent), not just for abandoning base-favored tokens.
+                cur_logp = F.log_softmax(phi, dim=-1)
+                cur_probs = cur_logp.exp()
+                kl = (cur_probs * (cur_logp - ref_logp)).sum(-1)
+                loss = loss + config.guidance_kl_beta * kl.sum()
+
             loss.backward()
             optimizer.step()
 
@@ -323,9 +357,26 @@ class RgrlDreamSampler(BaseSampler):
                 if right_shift_logits:
                     logits = torch.cat([logits[:, :1], logits[:, :-1]], dim=1)
 
+                # Frozen-base logits for guidance_kl_beta's trust region -- a second forward pass
+                # through the SAME weights with the LoRA adapter disabled, so the KL anchors
+                # guidance to what the original (non-adapted) model would say, not to this
+                # policy's own current-step unguided belief (see RgrlDreamSamplerConfig
+                # docstring for why that distinction matters).
+                if guidance_active and config.guidance_kl_beta != 0.0:
+                    with self.model.disable_adapter():
+                        if pos_id is not None:
+                            frozen_logits = self.model(x, attention_mask=attention_mask[:, None, None, :].bool(), position_ids=pos_id).logits
+                        else:
+                            frozen_logits = self.model(x, attention_mask=attention_mask[:, None, None, :].bool()).logits
+                    if right_shift_logits:
+                        frozen_logits = torch.cat([frozen_logits[:, :1], frozen_logits[:, :-1]], dim=1)
+                else:
+                    frozen_logits = None
+
             if guidance_active:
                 phi_opt, _, ew_mean = self._optimize_logits(
                     logits, mask_index, x, max_prompt_len, caches, K, config, str(device),
+                    frozen_base_logits=frozen_logits,
                 )
                 if ew_mean is not None:
                     _ew_step_means.append(ew_mean)

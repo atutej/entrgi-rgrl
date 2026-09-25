@@ -13,6 +13,24 @@ data
 *.txt
 *.out
 
+# Project-specific: experiment scratch/output, not source -- never needed to launch training/eval
+# on a different machine, and grows without bound if committed.
+wandb/
+outputs/
+logs/
+*.log
+*.sqlite
+eval/caches/
+eval/joblog/
+eval/*_heldout_skywork.json
+
+# Only MATH-500's own data is used by this project's eval/training scripts (math_eval/,
+# math500_train/); the other reason_benchmarks/ datasets (wildbench, popqa, creativewritingv3,
+# etc.) are large (~100M combined) and unused here -- keep the .py benchmark definitions (needed
+# for reason_benchmarks/__init__.py's auto-import) but not their data files.
+eval/reason_benchmarks/data_files/*
+!eval/reason_benchmarks/data_files/math_500/
+
 # Distribution / packaging
 .Python
 build/

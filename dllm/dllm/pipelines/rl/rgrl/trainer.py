@@ -46,6 +46,14 @@ class RGRLConfig(DiffuGRPOConfig):
         default="entrgi",
         metadata={"help": "'entrgi' (entropy-aware interpolation) or 'aps' (full STE, w=1)."},
     )
+    guidance_kl_beta: float = field(
+        default=0.0,
+        metadata={
+            "help": "Trust-region coefficient penalizing _optimize_logits's Adam ascent for "
+            "moving phi's distribution away from the frozen (non-adapted) base model's logits. "
+            "0.0 (default) = fully unconstrained. See RgrlDreamSamplerConfig.guidance_kl_beta."
+        },
+    )
     zero_unmatched_embeddings: bool = field(
         default=False,
         metadata={"help": "Zero embedding for policy tokens absent from reward model vocab. Recommended for LLaDA."},
@@ -267,6 +275,38 @@ class RGRLTrainer(DreamGRPOTrainer):
         self._diffu_iter_idx = 0
         self._current_mask_seed = self._mask_seeds[0]
 
+        # Precompute old_per_token_logps for every inner iteration -- same pattern as
+        # DiffuGRPOTrainer._generate_and_score_completions (grpo/trainer.py), needed by
+        # GDPOEstimatorTrainerMixin._compute_loss_body's ratio (used by the PSFT loss backend;
+        # RGRLTrainer's own native _compute_loss never reads this key, so it's harmless there).
+        # Gated the same way GRPO gates it: only worth the extra forward passes when a batch is
+        # actually reused across multiple _compute_loss calls. When not gated on (e.g.
+        # num_iterations=1 and no extra reuse), _compute_loss_body falls back to
+        # old_logps=logps.detach() -- mathematically identical to a same-point snapshot anyway,
+        # since no gradient step separates the two at that point.
+        need_old_logps = (
+            self.num_iterations > 1
+            or self.args.steps_per_generation > self.args.gradient_accumulation_steps
+        )
+        if need_old_logps:
+            logits_to_keep_for_old = completion_ids.size(1)
+            batch_size = (
+                self.args.per_device_train_batch_size
+                if mode == "train"
+                else self.args.per_device_eval_batch_size
+            )
+            with torch.no_grad():
+                old_logps_list = [
+                    self._get_per_token_logps(
+                        self.model, prompt_completion_ids, attention_mask,
+                        logits_to_keep_for_old, batch_size, seed=s,
+                    )
+                    for s in self._mask_seeds
+                ]
+            diffu_old_logps_all = torch.stack(old_logps_list, dim=1)  # [N, num_iterations, L]
+        else:
+            diffu_old_logps_all = None
+
         completions_text = self.processing_class.batch_decode(
             completion_ids, skip_special_tokens=True
         )
@@ -340,6 +380,19 @@ class RGRLTrainer(DreamGRPOTrainer):
         for i, name in enumerate(self.reward_func_names):
             self._textual_logs["rewards"][name].extend(rewards_per_func[:, i].tolist())
 
+        # DIAGNOSTIC: print a couple of real completions straight to stdout on the main process,
+        # so real generations/rewards are visible directly in the training log without waiting
+        # on wandb's Table integration for --log_completions.
+        if self.accelerator.is_main_process:
+            for i in range(min(2, len(completions_text))):
+                print(
+                    f"[completions_text mode={mode} step={self.state.global_step} "
+                    f"reward={rewards[i].item():.3f} len={completion_lengths[i].item()}]\n"
+                    f"  PROMPT: {prompts_text[i][:300]!r}\n"
+                    f"  COMPLETION: {completions_text[i][:500]!r}",
+                    flush=True,
+                )
+
         logits_to_keep = completion_ids.size(1)
 
         return {
@@ -349,6 +402,7 @@ class RGRLTrainer(DreamGRPOTrainer):
             "completion_mask": completion_mask,
             "num_items_in_batch": completion_mask.sum(),
             "logits_to_keep": torch.tensor(logits_to_keep, device=device),
+            "diffu_old_logps_all": diffu_old_logps_all,
         }
 
     def _compute_loss(self, model, inputs):

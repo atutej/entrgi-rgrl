@@ -523,6 +523,19 @@ class DiffuGRPOTrainer(GRPOTrainer):
             self._textual_logs["rewards"][name].extend(rewards_per_func[:, i].tolist())
         self._textual_logs["advantages"].extend(all_process_advantages.tolist())
 
+        # DIAGNOSTIC: print a couple of real completions straight to stdout on the main process,
+        # so real generations/rewards are visible directly in the training log without waiting
+        # on wandb's Table integration for --log_completions.
+        if self.accelerator.is_main_process:
+            for i in range(min(2, len(completions_text))):
+                print(
+                    f"[completions_text mode={mode} step={self.state.global_step} "
+                    f"reward={rewards[i].item():.3f} len={completion_lengths[i].item()}]\n"
+                    f"  PROMPT: {prompts_text[i][:300]!r}\n"
+                    f"  COMPLETION: {completions_text[i][:500]!r}",
+                    flush=True,
+                )
+
         return {
             "prompt_ids": prompt_ids,
             "prompt_mask": prompt_mask,

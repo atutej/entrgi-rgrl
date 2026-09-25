@@ -6,15 +6,40 @@ from peft import LoraConfig
 from trl import ModelConfig, TrlParser
 
 import dllm
-from dllm.pipelines.rl import RGRLConfig, RGRLTrainer, get_dataset_and_rewards
+from dllm.pipelines.rl import RGRLTrainer, get_dataset_and_rewards
 from dllm.pipelines.rl.rgrl import RgrlLLaDASampler, RgrlLLaDASamplerConfig
+from dllm.pipelines.rl.gdpo import (
+    RGRLGDPOConfig,
+    RGRLTrainerWithGDPOEstimatorOnly,
+    RGRLTrainerWithPSFTLoss,
+)
 
 logger = dllm.utils.get_default_logger(__name__)
 
 
 @dataclass
-class TrainingArguments(RGRLConfig):
+class TrainingArguments(RGRLGDPOConfig):
     output_dir: str = ".models/LLaDA-8B-Instruct/rgrl"
+    loss_backend: str = field(
+        default="gdpo_estimator",
+        metadata={
+            "help": "'gdpo_estimator' (default: swaps ONLY the log-prob estimator for GDPO's "
+            "own lower-variance quadrature/MC estimator -- see log_prob_mode -- keeping RGRL's "
+            "own loss formula unchanged; see RGRLTrainerWithGDPOEstimatorOnly's own docstring), "
+            "'psft' (Proximal SFT -- GDPO's own ratio/clip formula with advantages fixed to 1; "
+            "see RGRLTrainerWithPSFTLoss's own docstring, including the --beta caveat), or "
+            "'grpo' (RGRLTrainer's original native plain-SFT loss, with its inherited "
+            "single-random-masking-draw log-prob estimator)."
+        },
+    )
+    log_prob_mode: str = field(
+        default="gauss-3",
+        metadata={
+            "help": "Only used when loss_backend='gdpo_estimator'. 'full_mask' or one of "
+            "GAUSS_QUADRATURES's keys ('gauss-1'..'gauss-5') or 'mc' -- gauss-3 matches GDPO's "
+            "own real production default."
+        },
+    )
     dataset: Optional[str] = field(
         default="wildchat",
         metadata={"help": "Dataset: gsm8k, countdown, sudoku, math, code, wildchat, magpie, lmsys."},
@@ -81,6 +106,7 @@ def train():
                 "q_proj", "k_proj", "v_proj", "o_proj",
                 "up_proj", "down_proj", "gate_proj",
             ],
+            task_type="CAUSAL_LM",
             lora_dropout=model_config.lora_dropout,
         )
 
@@ -96,11 +122,16 @@ def train():
         eta=training_args.eta,
         num_generations=training_args.num_generations,
         guidance_type=training_args.guidance_type,
+        guidance_kl_beta=training_args.guidance_kl_beta,
         deprioritize_eos=training_args.deprioritize_eos,
     )
 
-    logger.info("Starting RG-RL online SFT (LLaDA)...")
-    trainer = RGRLTrainer(
+    trainer_cls = {
+        "gdpo_estimator": RGRLTrainerWithGDPOEstimatorOnly,
+        "psft": RGRLTrainerWithPSFTLoss,
+    }.get(training_args.loss_backend, RGRLTrainer)
+    logger.info(f"Starting RG-RL online SFT (LLaDA), loss_backend={training_args.loss_backend}...")
+    trainer = trainer_cls(
         model=model,
         reward_funcs=reward_functions,
         args=training_args,

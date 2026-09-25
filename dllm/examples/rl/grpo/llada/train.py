@@ -142,7 +142,7 @@ def train():
         steps=training_args.steps,
         max_new_tokens=training_args.max_completion_length,
         block_size=training_args.block_size,
-        temperature=training_args.temperature or 0.0,
+        temperature=training_args.temperature or 1.0,
         cfg_scale=training_args.cfg_scale,
         remasking=training_args.remasking,
     )
