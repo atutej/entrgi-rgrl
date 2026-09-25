@@ -13,8 +13,9 @@
 # Scoring is delegated to the official lcb_runner evaluator (see score_lcb.py); no custom
 # execution sandbox lives in this repo.
 #
-# Override MODEL / RELEASE_VERSION / etc. via:
-#   sbatch --export=MODEL="...",RELEASE_VERSION="release_v2" lcb_eval/lcb_eval.sbatch
+# Defaults to --difficulty hard (set DIFFICULTY="" to disable and generate for all difficulties).
+# Override MODEL / RELEASE_VERSION / DIFFICULTY / etc. via:
+#   sbatch --export=MODEL="...",RELEASE_VERSION="release_v6",DIFFICULTY="hard" lcb_eval/lcb_eval.sbatch
 # --output above is an ABSOLUTE path deliberately -- a relative one resolves against wherever
 # `sbatch` is invoked from, not this script's own location.
 
@@ -25,6 +26,7 @@ mkdir -p "$REPO_ROOT/lcb_eval/logs"
 
 MODEL="${MODEL:-Dream-org/Dream-v0-Instruct-7B}"
 RELEASE_VERSION="${RELEASE_VERSION:-release_v1}"
+DIFFICULTY="${DIFFICULTY:-hard}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-512}"
 TEMPERATURE="${TEMPERATURE:-0.1}"
 TOP_P="${TOP_P:-0.9}"
@@ -36,6 +38,9 @@ cd "$REPO_ROOT/lcb_eval"
 EXTRA_ARGS=()
 if [[ -n "$TEST_SAMPLE_SIZE" ]]; then
     EXTRA_ARGS+=(--test_sample_size "$TEST_SAMPLE_SIZE")
+fi
+if [[ -n "$DIFFICULTY" ]]; then
+    EXTRA_ARGS+=(--difficulty "$DIFFICULTY")
 fi
 
 ./run_lcb_eval.sh \

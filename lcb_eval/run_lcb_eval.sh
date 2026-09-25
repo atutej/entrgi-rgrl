@@ -4,8 +4,11 @@
 # runs score_lcb.py (the official lcb_runner evaluator) to get pass@1.
 #
 # Usage: ./run_lcb_eval.sh --num_gpus 4 --model Dream-org/Dream-v0-Instruct-7B \
-#            --release_version release_v1 --max_new_tokens 512 --temperature 0.1 --top_p 0.9
-# Every flag other than --num_gpus/--gpu_ids is forwarded to eval_lcb.py.
+#            --release_version release_v6 --difficulty hard --max_new_tokens 512 \
+#            --temperature 0.1 --top_p 0.9
+# Every flag other than --num_gpus/--gpu_ids is forwarded to eval_lcb.py (--difficulty included --
+# it needs no special handling here since score_lcb.py doesn't take it: lcb_runner's benchmark
+# reconstruction only depends on --release_version/--start_date/--end_date, not difficulty).
 set -euo pipefail
 
 CONDA_ROOT=/work/09749/atutej/vista/miniconda3

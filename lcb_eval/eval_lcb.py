@@ -16,15 +16,17 @@ sandbox -- see score_lcb.py in this folder, which shells out to
 `python -m lcb_runner.runner.custom_evaluator`. That evaluator already implements execution for
 both test types (TestType.STDIN and TestType.FUNCTIONAL), so no format-specific code lives here.
 
-"target" / --test_sample_size: by default every problem in the chosen --release_version/date range
-is a target (real generation). --test_sample_size instead takes a random subset of that range as
-targets, for a quick experiment; non-target problems still get an entry in the final output (empty
+"target" / --difficulty / --test_sample_size: by default every problem in the chosen
+--release_version/date range is a target (real generation). --difficulty narrows this to just
+easy/medium/hard problems, and --test_sample_size further takes a random subset of whatever that
+leaves, for a quick experiment; non-target problems still get an entry in the final output (empty
 code_list) because lcb_runner's custom_evaluator reconstructs its own copy of the FULL benchmark
-for the same --release_version/--start_date/--end_date and asserts
-`len(custom_outputs) == len(benchmark)` -- so every problem in range needs an entry regardless of
-whether we actually generated for it. score_lcb.py reports pass@1 restricted to the target subset
-from the evaluator's own per-question results when --test_sample_size narrowed it, so a subsampled
-run's number isn't diluted by problems that were never really attempted.
+for the same --release_version/--start_date/--end_date (it has no notion of --difficulty/
+--test_sample_size) and asserts `len(custom_outputs) == len(benchmark)` -- so every problem in
+range needs an entry regardless of whether we actually generated for it. score_lcb.py reports
+pass@1 restricted to the target subset from the evaluator's own per-question results whenever
+--difficulty/--test_sample_size narrowed it, so a narrowed run's number isn't diluted by problems
+that were never really attempted.
 
 One process = one shard = one GPU (pin with CUDA_VISIBLE_DEVICES before launching; this script
 itself never touches CUDA_VISIBLE_DEVICES). run_lcb_eval.sh launches --num_shards copies of this
@@ -85,6 +87,11 @@ def parse_args():
                     "181 LeetCode/functional) is the smallest, used as the initial-experiment default.")
     p.add_argument("--start_date", type=str, default=None, help="YYYY-MM-DD, inclusive.")
     p.add_argument("--end_date", type=str, default=None, help="YYYY-MM-DD, inclusive.")
+    p.add_argument("--difficulty", type=str, default=None, choices=["easy", "medium", "hard"],
+                    help="Only generate real completions for problems at this difficulty. "
+                    "Problems at other difficulties still get an entry in the merged output "
+                    "(empty code_list) to satisfy lcb_runner's benchmark-count assertion, same "
+                    "mechanism as --test_sample_size (see load_shard). Default: no filter.")
 
     p.add_argument("--max_new_tokens", type=int, default=512)
     p.add_argument("--steps", type=int, default=None, help="Defaults to --max_new_tokens.")
@@ -97,8 +104,8 @@ def parse_args():
     p.add_argument("--batch_size", type=int, default=8, help="Prompts per forward-pass batch.")
 
     p.add_argument("--test_sample_size", type=int, default=None,
-                    help="Only generate for this many of the LeetCode/functional (target) "
-                    "problems (random subset, before sharding). Default: all of them.")
+                    help="Only generate for this many problems (random subset of whatever "
+                    "--difficulty leaves as candidates, before sharding). Default: all of them.")
 
     p.add_argument("--output_dir", type=str, default="outputs")
     p.add_argument("--force_overwrite", action="store_true", default=False)
@@ -124,6 +131,8 @@ def shard_output_path(args) -> str:
     steps = args.steps or args.max_new_tokens
     tag = (f"lcb_{args.release_version}_{name}_max{args.max_new_tokens}steps{steps}"
            f"t{args.temperature}p{args.top_p}_{args.seed}")
+    if getattr(args, "difficulty", None):
+        tag += f"_{args.difficulty}"
     suffix = f"_shard{args.shard_index}of{args.num_shards}" if args.num_shards > 1 else ""
     return os.path.join(args.output_dir, f"{tag}{suffix}.json")
 
@@ -197,17 +206,23 @@ def extract_code(model_output: str) -> str:
 def load_shard(args):
     problems = load_lcb_dataset(args.release_version, args.start_date, args.end_date)
 
-    # All platforms/test types are targets (matches both lcb_runner's own canonical scoring,
+    # All platforms/test types are candidates (matches both lcb_runner's own canonical scoring,
     # which aggregates across platforms by default, and dllm4code's LiveCodeBench script, which
     # generates for every problem with no platform filter -- build_prompt() already branches on
     # starter_code truthiness the same way theirs does, so stdin/stdout problems get a real
-    # generation attempt too, not just a placeholder).
-    all_ids = [p.question_id for p in problems]
+    # generation attempt too, not just a placeholder). --difficulty narrows the candidate pool
+    # before --test_sample_size (if given) subsamples from it; problems outside the candidate
+    # pool still get an entry in the merged output (empty code_list) via is_target=False, same
+    # reason as --test_sample_size's own non-sampled problems (see module docstring).
+    candidate_ids = [
+        p.question_id for p in problems
+        if args.difficulty is None or p.difficulty.value == args.difficulty
+    ]
     if args.test_sample_size is not None:
         rng = random.Random(args.seed)
-        target_ids = set(rng.sample(all_ids, min(args.test_sample_size, len(all_ids))))
+        target_ids = set(rng.sample(candidate_ids, min(args.test_sample_size, len(candidate_ids))))
     else:
-        target_ids = set(all_ids)
+        target_ids = set(candidate_ids)
 
     for p in problems:
         p.is_target = p.question_id in target_ids  # dataclass allows attribute assignment
