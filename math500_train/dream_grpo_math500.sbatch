@@ -25,6 +25,13 @@
 #
 # --output above is an ABSOLUTE path deliberately -- a relative one resolves against wherever
 # `sbatch` is invoked from, not this script's own location.
+#
+# To resume a crashed/timed-out run (qgb's MaxWall is 12h), override BOTH RUN_NAME (so this run
+# reuses the SAME output_dir the crashed job was writing to, not a fresh one keyed on the new
+# SLURM_JOB_ID) and RESUME_FROM_CHECKPOINT (a checkpoint-N dir under that output_dir, or "true" to
+# auto-pick the latest one there):
+#   sbatch --export=RUN_NAME=dream-grpo-math500-<old_job_id>,RESUME_FROM_CHECKPOINT=true \
+#       math500_train/dream_grpo_math500.sbatch
 
 set -euo pipefail
 
@@ -51,9 +58,15 @@ MASTER_PORT=$(expr 10000 + $(echo -n "$SLURM_JOBID" | tail -c 4))
 export MASTER_ADDR MASTER_PORT
 echo "MASTER_ADDR=$MASTER_ADDR MASTER_PORT=$MASTER_PORT NNODES=$SLURM_NNODES"
 
-RUN_NAME=dream-grpo-math500-${SLURM_JOB_ID}
+RUN_NAME="${RUN_NAME:-dream-grpo-math500-${SLURM_JOB_ID}}"
+RESUME_FROM_CHECKPOINT="${RESUME_FROM_CHECKPOINT:-}"
 LOGDIR=$SCRATCH/checkpoints/entrgi_rgrl_clean/dream_grpo_math500/slurm/${SLURM_JOB_ID}
 mkdir -p "$LOGDIR"
+
+RESUME_ARGS=""
+if [[ -n "$RESUME_FROM_CHECKPOINT" ]]; then
+    RESUME_ARGS="--resume_from_checkpoint $RESUME_FROM_CHECKPOINT"
+fi
 
 srun --output "${LOGDIR}/%N.out" \
     bash -c "accelerate launch \
@@ -80,4 +93,5 @@ srun --output "${LOGDIR}/%N.out" \
         --reward_model Skywork/Skywork-Reward-V2-Qwen3-8B \
         --log_completions True \
         --run_name $RUN_NAME \
-        --output_dir $SCRATCH/checkpoints/entrgi_rgrl_clean/$RUN_NAME"
+        --output_dir $SCRATCH/checkpoints/entrgi_rgrl_clean/$RUN_NAME \
+        $RESUME_ARGS"

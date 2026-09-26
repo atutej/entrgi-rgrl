@@ -210,7 +210,7 @@ def train():
             f"{training_args.num_iterations}."
         )
 
-    trainer.train()
+    trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
 
 
 if __name__ == "__main__":
